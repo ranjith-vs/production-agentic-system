@@ -80,6 +80,8 @@ services:
   app: &app
     restart: unless-stopped
     build: ./app
+    volumes:
+      - ./schema:/app/schema:ro
     depends_on:
       apisix:
         condition: service_started
@@ -99,6 +101,7 @@ services:
       - MCP_SERVER_URL=http://mcp-server:9000
       - REDIS_URL=redis://redis:6379/0
       - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev-insecure-secret-change-me}
     ports:
       - "8000:8000"
 
