@@ -1,27 +1,49 @@
 ### Overview
 
-This repository serves as a backend reference implementation for production-ready multi-agent systems built using **LangGraph**.
+A backend reference implementation for production-ready multi-agent systems built on **LangGraph**, fronted by an **Apache APISIX** AI gateway.
 
-### Key Architectural Features
+### Key Features
 
-* **State Persistence:** Managed using checkpointers.
-* **Communication & Protocols:** Server-Sent Events (SSE) and tools/Model Context Protocol (MCP) support.
-* **Governance & Evaluation:** Includes validation checks, governance rules, and judge mechanisms.
-* **Retrieval-Augmented Generation:** Integrated RAG support using async processing
-* **Gateway Routing:** Features semantic caching, multi-provider failover, and rate limiting.
-* **Observability & Debugging:** Trace collection via OpenTelemetry and replay features for agent runs.
+* **Gateway-routed LLM calls** — all OpenAI traffic goes through APISIX (`ai-proxy` for plain chat, a raw passthrough route for tool-calling/embeddings); the real API key lives only in the gateway config, never in app code.
+* **Streaming** — `/chat/stream` streams token-by-token via Server-Sent Events.
+* **State persistence** — conversation state checkpointed to Postgres (`AsyncPostgresSaver`); pass a `thread_id` to resume a conversation.
+* **MCP tool support** — tools served by a standalone MCP server and loaded via `langchain-mcp-adapters`.
+* **RAG** — document upload → async chunk/embed (Celery + Redis) → pgvector similarity search, exposed as a tool.
+* **Multi-agent orchestration** — a planner picks one or more specialist subgraphs (`general`, `research`) per turn and synthesizes their replies when more than one runs.
+* **Semantic caching** — prompt/response pairs cached by embedding similarity in Postgres, scoped per agent.
+* **Governance** — a zero-temperature judge model reviews each draft reply for relevance/safety before it's returned.
+* **Prompts as data** — planner and judge prompts live in a Postgres `prompts` table (seeded with defaults on startup) and are read fresh on every turn, so they can be edited via the `/prompts` API with no redeploy.
+* **Agent Builder UI** — create agents (name, system prompt, allowed tool-sets) through a UI; chat against a specific agent by id.
+* **Observability** — full OpenTelemetry trace tree per request via `arize-phoenix-otel`, browsable at `http://localhost:6006`.
+* **Replay/debugging** — inspect and replay any thread's checkpoint history (`/threads/{id}/checkpoints`, `/threads/{id}/replay`).
 
-### UI & Agent Builder Capabilities
+### Running it
 
-* **Natural Language Agent Creation:** Build and configure agents using natural language.
-* **Customization:** Add custom skills, tools, LLM choices, and agent capabilities directly through the UI.
+```bash
+cp .env.example .env   # fill in OPENAI_API_KEY
+docker compose up --build
+```
 
- ### Product Features & Execution Architecture
+Then open **http://localhost:8000** for the UI (Chat / Documents / Agents / Threads), or **http://localhost:6006** for Phoenix traces.
 
-* **Flexible Agent Creation:** Build and configure agents dynamically either through the natural language UI [Agent Builder] or via manual system prompt and skill assignments.
-* **Dual-Mode Execution & Streaming:** Encapsulate and run agents under both **non-streaming** modes and real-time **Server-Sent Events (SSE)** streaming modes for immediate visibility, these agents then can be used as an API. Once creation is confirmed these agents can be tested individually using their own API's which act as a single agent.
- 
-* **Orchestration, Flows & Agent Building:** Support both **manual definitions** and **Agent Builder** capabilities for workflows and multi-agent systems. Users can define custom chat flows, default behaviors (such as a default greeting like "Hello! How can I help you?"), and individual agent structures as `BotStructure` to be executed at runtime by LangGraph. In multi-agent setups, a central **Planner Agent** interprets incoming user prompts, dynamically selects and deploys the necessary specialized agents, and aggregates their outputs to fulfill complex tasks. Alternatively, these defined workflows and standalone agents can be independently deployed and used elsewhere.
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "hello"}'
 
-* **Robust Core Infrastructure:** Backed by LangGraph [State Persistence](https://github.com/ranjith-vs/production-agentic-system/edit/main/README.md), Model Context Protocol (MCP) tool support, multi-provider gateway routing, and OpenTelemetry observability.
+# streaming (SSE)
+curl -N -X POST http://localhost:8000/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message": "hello"}'
+```
 
+Request path: `app` (FastAPI + LangGraph) → `apisix:9080` → `api.openai.com`. Routes are provisioned at startup by the `apisix-init` container (`apisix/init-routes.sh`).
+
+### Editing prompts at runtime
+
+```bash
+curl http://localhost:8000/prompts
+curl -X PUT http://localhost:8000/prompts/planner \
+  -H "Content-Type: application/json" \
+  -d '{"content": "your new planner prompt"}'
+```
