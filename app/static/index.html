@@ -1,0 +1,684 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>production-agentic-system</title>
+<style>
+  :root {
+    --bg: #faf9fd;
+    --bg-wash: radial-gradient(1200px 500px at 10% -10%, rgba(124,58,237,.10), transparent 60%),
+                radial-gradient(900px 400px at 90% -20%, rgba(236,72,153,.08), transparent 60%);
+    --fg: #15161c;
+    --muted: #6b7083;
+    --border: #e8e6f0;
+    --accent1: #7c3aed;
+    --accent2: #ec4899;
+    --accent3: #06b6d4;
+    --accent-grad: linear-gradient(135deg, var(--accent1), var(--accent2));
+    --card: #ffffff;
+    --card-shadow: 0 1px 2px rgba(20,16,40,.04), 0 6px 20px rgba(20,16,40,.06);
+    --bubble-user-fg: #ffffff;
+    --bubble-ai: #f2effa;
+    --bubble-ai-fg: #15161c;
+    --ring: rgba(124,58,237,.25);
+    --danger: #e11d48;
+    --danger-bg: rgba(225,29,72,.12);
+    --info: #0891b2;
+    --info-bg: rgba(8,145,178,.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0a0a0f;
+      --bg-wash: radial-gradient(1200px 500px at 10% -10%, rgba(167,139,250,.14), transparent 60%),
+                  radial-gradient(900px 400px at 90% -20%, rgba(244,114,182,.10), transparent 60%);
+      --fg: #eceaf5;
+      --muted: #9a9eb3;
+      --border: #212230;
+      --accent1: #a78bfa;
+      --accent2: #f472b6;
+      --accent3: #22d3ee;
+      --card: #14141e;
+      --card-shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+      --bubble-ai: #1d1e2b;
+      --bubble-ai-fg: #eceaf5;
+      --ring: rgba(167,139,250,.35);
+      --danger: #fb7185;
+      --danger-bg: rgba(251,113,133,.14);
+      --info: #22d3ee;
+      --info-bg: rgba(34,211,238,.14);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+    background: var(--bg);
+    background-image: var(--bg-wash);
+    background-attachment: fixed;
+    color: var(--fg);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    padding: 1rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+    backdrop-filter: blur(10px);
+  }
+  header h1 {
+    font-size: 1.05rem;
+    margin: 0;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    background: var(--accent-grad);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  header h1::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--accent-grad);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent1) 18%, transparent);
+    -webkit-background-clip: border-box;
+    background-clip: border-box;
+  }
+  nav { display: flex; gap: 0.3rem; background: var(--card); padding: 0.3rem; border-radius: 999px; border: 1px solid var(--border); box-shadow: var(--card-shadow); }
+  nav button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    padding: 0.45rem 0.95rem;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  nav button:hover { color: var(--fg); }
+  nav button.active {
+    background: var(--accent-grad);
+    color: white;
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--accent1) 45%, transparent);
+  }
+  main { max-width: 780px; margin: 0 auto; padding: 2rem 1.5rem 3rem; }
+  .tab { display: none; animation: fadeIn .25s ease; }
+  .tab.active { display: block; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  .row { display: flex; gap: 0.5rem; align-items: center; }
+  select, input[type=text], input[type=file], textarea {
+    background: var(--card);
+    color: var(--fg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
+    font-size: 0.9rem;
+    font-family: inherit;
+    transition: box-shadow .15s ease, border-color .15s ease;
+  }
+  select:focus, input:focus, textarea:focus {
+    outline: none;
+    border-color: var(--accent1);
+    box-shadow: 0 0 0 4px var(--ring);
+  }
+  textarea { width: 100%; resize: vertical; }
+
+  button.primary {
+    background: var(--accent-grad);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 0.6rem 1.15rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--accent1) 35%, transparent);
+    transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+  }
+  button.primary:hover { transform: translateY(-1px); filter: brightness(1.06); box-shadow: 0 4px 16px color-mix(in srgb, var(--accent1) 45%, transparent); }
+  button.primary:active { transform: translateY(0); }
+  button.primary:disabled { opacity: 0.5; cursor: default; transform: none; box-shadow: none; }
+
+  button.ghost {
+    background: var(--card);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    border-radius: 10px;
+    padding: 0.55rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  button.ghost:hover { border-color: var(--accent1); color: var(--accent1); box-shadow: var(--card-shadow); }
+
+  #chat-toolbar { margin-bottom: 1.1rem; justify-content: space-between; }
+  #log {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    min-height: 320px;
+    max-height: 55vh;
+    overflow-y: auto;
+    padding: 1rem;
+    margin-bottom: 0.9rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: var(--card-shadow);
+  }
+  .msg {
+    max-width: 80%;
+    padding: 0.6rem 0.9rem;
+    border-radius: 14px;
+    font-size: 0.92rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    animation: popIn .18s ease;
+  }
+  @keyframes popIn { from { opacity: 0; transform: translateY(6px) scale(.98); } to { opacity: 1; transform: none; } }
+  .msg.user { align-self: flex-end; background: var(--accent-grad); color: var(--bubble-user-fg); border-bottom-right-radius: 4px; }
+  .msg.ai { align-self: flex-start; background: var(--bubble-ai); color: var(--bubble-ai-fg); border-bottom-left-radius: 4px; }
+  .msg.pending { opacity: 0.55; }
+  #chat-input-row { gap: 0.6rem; }
+  #chat-input-row input { flex: 1; }
+  .hint { color: var(--muted); font-size: 0.78rem; margin-top: 0.5rem; }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 1.1rem;
+    margin-bottom: 0.8rem;
+    box-shadow: var(--card-shadow);
+  }
+  .card h3 { margin: 0 0 0.35rem 0; font-size: 0.95rem; font-weight: 700; }
+  .card p { margin: 0.25rem 0; font-size: 0.85rem; color: var(--muted); white-space: pre-wrap; }
+
+  .field { margin-bottom: 0.85rem; }
+  .field label { display: block; font-size: 0.82rem; margin-bottom: 0.35rem; color: var(--muted); font-weight: 600; }
+  .checks { display: flex; gap: 1.2rem; margin-bottom: 1rem; font-size: 0.88rem; }
+  .checks label { display: flex; align-items: center; gap: 0.45rem; color: var(--fg); }
+  #doc-status { margin-top: 0.9rem; font-size: 0.85rem; color: var(--muted); }
+
+  .breadcrumb { font-size: 0.85rem; color: var(--muted); margin-bottom: 1rem; font-weight: 600; }
+  .breadcrumb a { color: var(--accent1); cursor: pointer; text-decoration: none; }
+  .breadcrumb a:hover { text-decoration: underline; }
+
+  .badge {
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    margin-left: 0.4rem;
+    letter-spacing: .01em;
+  }
+  .badge-accent { background: color-mix(in srgb, var(--accent1) 16%, transparent); color: var(--accent1); }
+  .badge-danger { background: var(--danger-bg); color: var(--danger); }
+  .badge-info { background: var(--info-bg); color: var(--info); }
+
+  .thread-row, .ckpt-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.75rem 1rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-left: 3px solid transparent;
+    border-radius: 12px;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all .15s ease;
+  }
+  .thread-row:hover, .ckpt-row:hover { border-left-color: var(--accent1); transform: translateX(2px); box-shadow: var(--card-shadow); }
+  .ckpt-row.selected { border-left-color: var(--accent2); background: color-mix(in srgb, var(--accent1) 6%, var(--card)); }
+  .thread-row .meta, .ckpt-row .meta { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+  .ckpt-row .preview, .thread-row .preview { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #ckpt-detail { margin-top: 1.2rem; }
+  #ckpt-transcript .msg { max-width: 100%; }
+  #replay-result { margin-top: 0.7rem; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>production-agentic-system</h1>
+  <nav>
+    <button data-tab="chat" class="active">Chat</button>
+    <button data-tab="documents">Documents</button>
+    <button data-tab="agents">Agents</button>
+    <button data-tab="history">History</button>
+  </nav>
+</header>
+
+<main>
+
+  <section id="tab-chat" class="tab active">
+    <div class="row" id="chat-toolbar">
+      <div class="row">
+        <label for="agent-select" style="font-size:0.85rem;color:var(--muted);font-weight:600">Agent:</label>
+        <select id="agent-select"><option value="">(default - all specialists)</option></select>
+      </div>
+      <button class="ghost" id="new-thread-btn">New thread</button>
+    </div>
+    <div id="log"></div>
+    <div class="row" id="chat-input-row">
+      <input type="text" id="chat-input" placeholder="Ask something..." />
+      <button class="primary" id="send-btn">Send</button>
+    </div>
+    <p class="hint" id="thread-hint">No thread yet - one is created on first message.</p>
+  </section>
+
+  <section id="tab-documents" class="tab">
+    <div class="card">
+      <h3>Upload a document</h3>
+      <p>Plain text / markdown is decoded as UTF-8 and chunked, embedded, and stored async via Celery.</p>
+      <div class="field">
+        <input type="file" id="doc-file" />
+      </div>
+      <button class="primary" id="upload-btn">Upload</button>
+      <div id="doc-status"></div>
+    </div>
+  </section>
+
+  <section id="tab-agents" class="tab">
+    <div class="card">
+      <h3>Create an agent</h3>
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="agent-name" placeholder="e.g. Support Bot" />
+      </div>
+      <div class="field">
+        <label>System prompt</label>
+        <textarea id="agent-prompt" rows="3" placeholder="You are a concise, friendly support agent..."></textarea>
+      </div>
+      <div class="checks">
+        <label><input type="checkbox" id="agent-general" checked /> general tools (calculator, clock)</label>
+        <label><input type="checkbox" id="agent-research" checked /> research tools (document search)</label>
+      </div>
+      <button class="primary" id="create-agent-btn">Create agent</button>
+    </div>
+    <div id="agent-list"></div>
+  </section>
+
+  <section id="tab-history" class="tab">
+    <div class="breadcrumb" id="history-breadcrumb">Threads</div>
+
+    <div id="thread-list-view">
+      <div class="row" style="justify-content:space-between; margin-bottom:0.9rem;">
+        <p class="hint" style="margin:0">Every conversation, which agent it last used, and what was said.</p>
+        <button class="ghost" id="refresh-threads-btn">Refresh</button>
+      </div>
+      <div id="thread-list"></div>
+    </div>
+
+    <div id="checkpoint-list-view" style="display:none">
+      <p class="hint">Every node transition for this thread, oldest first. Click one to inspect and replay from it.</p>
+      <div id="checkpoint-list"></div>
+      <div id="ckpt-detail"></div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+const state = { threadId: null, agents: [] };
+
+function $(id) { return document.getElementById(id); }
+
+// --- tabs ---
+function activateTab(name) {
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("active", b.dataset.tab === name));
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.id === "tab-" + name));
+  if (name === "agents") loadAgents();
+  if (name === "history") { loadAgents(); showThreadListView(); }
+}
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.addEventListener("click", () => activateTab(btn.dataset.tab));
+});
+
+// --- chat ---
+function appendMessage(role, text) {
+  const div = document.createElement("div");
+  div.className = "msg " + role;
+  div.textContent = text;
+  $("log").appendChild(div);
+  $("log").scrollTop = $("log").scrollHeight;
+  return div;
+}
+
+async function sendMessage() {
+  const input = $("chat-input");
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = "";
+  $("send-btn").disabled = true;
+
+  appendMessage("user", message);
+  const aiDiv = appendMessage("ai", "");
+  aiDiv.classList.add("pending");
+
+  const agentId = $("agent-select").value || null;
+  const body = { message, thread_id: state.threadId, agent_id: agentId ? Number(agentId) : null };
+
+  try {
+    const res = await fetch("/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let answer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop();
+      for (const raw of events) {
+        if (!raw.trim()) continue;
+        const lines = raw.split("\n");
+        let eventName = "message";
+        let data = "";
+        for (const line of lines) {
+          if (line.startsWith("event:")) eventName = line.slice(6).trim();
+          if (line.startsWith("data:")) data = line.slice(5).trim();
+        }
+        if (!data) continue;
+        const payload = JSON.parse(data);
+        if (eventName === "thread") {
+          state.threadId = payload.thread_id;
+          $("thread-hint").textContent = "thread_id: " + state.threadId;
+        } else if (eventName === "token") {
+          answer += payload.content;
+          aiDiv.textContent = answer;
+          aiDiv.classList.remove("pending");
+          $("log").scrollTop = $("log").scrollHeight;
+        }
+      }
+    }
+  } catch (err) {
+    aiDiv.textContent = "(error: " + err + ")";
+    aiDiv.classList.remove("pending");
+  } finally {
+    $("send-btn").disabled = false;
+  }
+}
+
+$("send-btn").addEventListener("click", sendMessage);
+$("chat-input").addEventListener("keydown", e => { if (e.key === "Enter") sendMessage(); });
+$("new-thread-btn").addEventListener("click", () => {
+  state.threadId = null;
+  $("log").innerHTML = "";
+  $("thread-hint").textContent = "No thread yet - one is created on first message.";
+});
+
+// --- documents ---
+$("upload-btn").addEventListener("click", async () => {
+  const fileInput = $("doc-file");
+  if (!fileInput.files.length) return;
+  const form = new FormData();
+  form.append("file", fileInput.files[0]);
+  $("doc-status").textContent = "Uploading...";
+  const res = await fetch("/documents", { method: "POST", body: form });
+  const data = await res.json();
+  $("doc-status").textContent = "Queued (task " + data.task_id + "). Checking status...";
+  pollDocStatus(data.task_id);
+});
+
+async function pollDocStatus(taskId) {
+  const res = await fetch("/documents/status/" + taskId);
+  const data = await res.json();
+  if (data.state === "SUCCESS") {
+    $("doc-status").textContent = "Done: " + JSON.stringify(data.result);
+  } else if (data.state === "FAILURE") {
+    $("doc-status").textContent = "Failed.";
+  } else {
+    $("doc-status").textContent = "Status: " + data.state + "...";
+    setTimeout(() => pollDocStatus(taskId), 1500);
+  }
+}
+
+// --- agents ---
+async function loadAgents() {
+  const res = await fetch("/agents");
+  state.agents = await res.json();
+
+  const select = $("agent-select");
+  select.innerHTML = '<option value="">(default - all specialists)</option>';
+  for (const a of state.agents) {
+    const opt = document.createElement("option");
+    opt.value = a.id;
+    opt.textContent = a.name;
+    select.appendChild(opt);
+  }
+
+  const list = $("agent-list");
+  list.innerHTML = "";
+  for (const a of state.agents) {
+    const card = document.createElement("div");
+    card.className = "card";
+    const skills = [a.use_general_tools ? "general" : null, a.use_research_tools ? "research" : null]
+      .filter(Boolean).join(", ") || "none";
+    card.innerHTML = `<h3>${a.name}</h3><p>skills: ${skills}</p><p>${a.system_prompt || "(no system prompt)"}</p>`;
+    list.appendChild(card);
+  }
+}
+
+$("create-agent-btn").addEventListener("click", async () => {
+  const name = $("agent-name").value.trim();
+  if (!name) return;
+  const payload = {
+    name,
+    system_prompt: $("agent-prompt").value,
+    use_general_tools: $("agent-general").checked,
+    use_research_tools: $("agent-research").checked,
+  };
+  await fetch("/agents", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  $("agent-name").value = "";
+  $("agent-prompt").value = "";
+  loadAgents();
+});
+
+// --- history ---
+function agentLabel(agentId) {
+  if (agentId == null) return "default";
+  const a = state.agents.find(x => x.id === agentId);
+  return a ? a.name : "agent #" + agentId;
+}
+
+function badgeHtml(text, kind) {
+  const cls = kind === "danger" ? "badge-danger" : kind === "info" ? "badge-info" : "badge-accent";
+  return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
+}
+
+function messageNameBadge(name) {
+  if (!name) return "";
+  if (name === "governance_blocked") return " " + badgeHtml(name, "danger");
+  if (name === "semantic_cache_hit") return " " + badgeHtml(name, "info");
+  return " " + badgeHtml(name, "accent");
+}
+
+function fmtTime(iso) {
+  return new Date(iso).toLocaleString();
+}
+
+function showThreadListView() {
+  state.historyThreadId = null;
+  $("history-breadcrumb").innerHTML = "Threads";
+  $("thread-list-view").style.display = "";
+  $("checkpoint-list-view").style.display = "none";
+  loadThreadList();
+}
+
+async function loadThreadList() {
+  const res = await fetch("/threads");
+  const threads = await res.json();
+  const list = $("thread-list");
+  list.innerHTML = "";
+  if (!threads.length) {
+    list.innerHTML = '<p class="hint">No conversations yet - send a chat message first.</p>';
+    return;
+  }
+  for (const t of threads) {
+    const row = document.createElement("div");
+    row.className = "thread-row";
+    row.innerHTML = `
+      <div style="flex:1; overflow:hidden">
+        <div class="preview"><strong>${escapeHtml(t.last_message || "")}</strong> ${badgeHtml(t.agent_name || "default", "accent")}</div>
+        <div class="meta">${escapeHtml(t.last_response || "")}</div>
+      </div>
+      <div class="meta" style="white-space:nowrap">${fmtTime(t.updated_at)}</div>
+    `;
+    row.addEventListener("click", () => openThread(t.thread_id));
+    list.appendChild(row);
+  }
+}
+
+$("refresh-threads-btn").addEventListener("click", loadThreadList);
+
+function escapeHtml(s) {
+  const d = document.createElement("div");
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+async function openThread(threadId) {
+  state.historyThreadId = threadId;
+  $("history-breadcrumb").innerHTML = `<a onclick="showThreadListView()">Threads</a> / ${threadId.slice(0, 8)}...`;
+  $("thread-list-view").style.display = "none";
+  $("checkpoint-list-view").style.display = "";
+  $("ckpt-detail").innerHTML = "";
+  await loadCheckpoints(threadId);
+}
+
+async function loadCheckpoints(threadId) {
+  const res = await fetch(`/threads/${threadId}/checkpoints`);
+  const checkpoints = await res.json();
+  state.checkpoints = checkpoints;
+  const list = $("checkpoint-list");
+  list.innerHTML = "";
+  for (const c of checkpoints) {
+    const row = document.createElement("div");
+    row.className = "ckpt-row";
+    row.dataset.checkpointId = c.checkpoint_id;
+    const preview = c.last_message ? `[${c.last_message.type}] ${c.last_message.content}` : "(empty)";
+    row.innerHTML = `
+      <div class="preview">step ${c.step}: ${escapeHtml(preview)}</div>
+      <div class="meta">${c.num_messages} msgs ${badgeHtml(agentLabel(c.agent_id), "accent")}</div>
+    `;
+    row.addEventListener("click", () => openCheckpoint(threadId, c.checkpoint_id));
+    list.appendChild(row);
+  }
+}
+
+async function openCheckpoint(threadId, checkpointId) {
+  document.querySelectorAll(".ckpt-row").forEach(r => r.classList.toggle("selected", r.dataset.checkpointId === checkpointId));
+
+  const res = await fetch(`/threads/${threadId}/checkpoints/${checkpointId}`);
+  const ckpt = await res.json();
+
+  const lastHuman = [...ckpt.messages].reverse().find(m => m.type === "HumanMessage");
+
+  const detail = $("ckpt-detail");
+  detail.innerHTML = `
+    <div class="card">
+      <h3>Checkpoint ${checkpointId.slice(0, 8)}...</h3>
+      <p>next node: ${ckpt.next.length ? ckpt.next.join(", ") : "(end)"} · agent: ${escapeHtml(agentLabel(ckpt.agent_id))}</p>
+      ${ckpt.system_prompt ? `<p>system prompt: ${escapeHtml(ckpt.system_prompt)}</p>` : ""}
+    </div>
+    <div id="ckpt-transcript" style="display:flex;flex-direction:column;gap:0.5rem;margin-bottom:0.85rem">
+      ${ckpt.messages.map(m => `<div class="msg ${m.type === "HumanMessage" ? "user" : "ai"}">${escapeHtml(m.content)}${messageNameBadge(m.name)}</div>`).join("")}
+    </div>
+    <div class="field">
+      <label>Replay from here - edit the message to fork with a new question, or leave as-is and resume to re-run the remaining steps with fresh model calls:</label>
+      <textarea id="replay-message" rows="2">${escapeHtml(lastHuman ? lastHuman.content : "")}</textarea>
+    </div>
+    <div class="row">
+      <button class="primary" id="replay-edited-btn">Replay with this message</button>
+      <button class="ghost" id="replay-resume-btn">Resume (no new message)</button>
+    </div>
+    <div id="replay-result"></div>
+  `;
+
+  $("replay-edited-btn").addEventListener("click", () => doReplay(threadId, checkpointId, $("replay-message").value.trim() || null));
+  $("replay-resume-btn").addEventListener("click", () => doReplay(threadId, checkpointId, null));
+}
+
+async function doReplay(threadId, checkpointId, message) {
+  const resultBox = $("replay-result");
+  resultBox.textContent = "Replaying...";
+  try {
+    const res = await fetch(`/threads/${threadId}/replay`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ checkpoint_id: checkpointId, message }),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    resultBox.innerHTML = `
+      <div class="card">
+        <h3>Result</h3>
+        <p>${escapeHtml(data.response)}</p>
+        <p class="hint">new checkpoint: ${data.new_checkpoint_id.slice(0, 8)}... - this is now the thread's current state.</p>
+        <button class="ghost" id="continue-in-chat-btn">Continue this thread in Chat</button>
+      </div>
+    `;
+    $("continue-in-chat-btn").addEventListener("click", () => continueThreadInChat(threadId));
+    await loadCheckpoints(threadId); // new branch appended - refresh the timeline
+  } catch (err) {
+    resultBox.textContent = "Error: " + err;
+  }
+}
+
+async function continueThreadInChat(threadId) {
+  state.threadId = threadId;
+  const res = await fetch(`/threads/${threadId}/checkpoints`);
+  const checkpoints = await res.json();
+  const latest = checkpoints[checkpoints.length - 1];
+
+  $("log").innerHTML = "";
+  if (latest) {
+    const detailRes = await fetch(`/threads/${threadId}/checkpoints/${latest.checkpoint_id}`);
+    const detail = await detailRes.json();
+    for (const m of detail.messages) {
+      if (m.type === "HumanMessage") appendMessage("user", m.content);
+      else if (m.type === "AIMessage" && m.content) appendMessage("ai", m.content);
+    }
+    $("agent-select").value = detail.agent_id || "";
+  }
+  $("thread-hint").textContent = "thread_id: " + threadId;
+  activateTab("chat");
+}
+
+loadAgents();
+</script>
+</body>
+</html>
