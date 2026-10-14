@@ -1,0 +1,15 @@
+fastapi==0.115.6
+uvicorn[standard]==0.32.1
+langgraph==0.2.60
+langgraph-checkpoint-postgres==2.0.13
+langchain-openai==0.2.14
+langchain-mcp-adapters==0.1.0
+pydantic==2.10.3
+psycopg[binary,pool]==3.2.3
+pgvector==0.3.6
+celery==5.4.0
+redis==5.2.1
+openai==1.109.1
+python-multipart==0.0.32
+arize-phoenix-otel==0.17.2
+openinference-instrumentation-langchain==0.1.79
