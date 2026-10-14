@@ -1,6 +1,10 @@
 ### Overview
 
+This repo can be used for a learning and debugging experience on production AI systems.
+
 A backend reference implementation for production-ready multi-agent systems built on **LangGraph**, fronted by an **Apache APISIX** AI gateway.
+
+Docker containers signify the distributed nature of the system.
 
 ### Key Features
 
