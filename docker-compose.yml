@@ -1,0 +1,113 @@
+services:
+  postgres:
+    restart: unless-stopped
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=agentic
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  etcd:
+    restart: unless-stopped
+    image: bitnamilegacy/etcd:3.5.11
+    environment:
+      - ALLOW_NONE_AUTHENTICATION=yes
+      - ETCD_ENABLE_V2=true
+      - ETCD_ADVERTISE_CLIENT_URLS=http://etcd:2379
+      - ETCD_LISTEN_CLIENT_URLS=http://0.0.0.0:2379
+    volumes:
+      - etcd_data:/bitnami/etcd
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  apisix:
+    restart: unless-stopped
+    image: apache/apisix:3.11.0-debian
+    depends_on:
+      etcd:
+        condition: service_healthy
+    volumes:
+      - ./apisix/config.yaml:/usr/local/apisix/conf/config.yaml:ro
+    ports:
+      - "9080:9080"
+      - "9180:9180"
+
+  apisix-init:
+    image: curlimages/curl:8.10.1
+    depends_on:
+      - apisix
+    volumes:
+      - ./apisix/init-routes.sh:/init-routes.sh:ro
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+    entrypoint: ["sh", "/init-routes.sh"]
+
+  mcp-server:
+    restart: unless-stopped
+    build: ./mcp_server
+    ports:
+      - "9000:9000"
+
+  redis:
+    restart: unless-stopped
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 5s
+      retries: 10
+
+  phoenix:
+    restart: unless-stopped
+    image: arizephoenix/phoenix:latest
+    ports:
+      - "6006:6006"
+      - "4317:4317"
+
+  app: &app
+    restart: unless-stopped
+    build: ./app
+    depends_on:
+      apisix:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      mcp-server:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      phoenix:
+        condition: service_started
+    environment: &app-environment
+      - APISIX_GATEWAY_URL=http://apisix:9080
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - EMBED_MODEL=${EMBED_MODEL:-text-embedding-3-small}
+      - POSTGRES_URL=postgresql://postgres:postgres@postgres:5432/agentic
+      - MCP_SERVER_URL=http://mcp-server:9000
+      - REDIS_URL=redis://redis:6379/0
+      - PHOENIX_COLLECTOR_ENDPOINT=http://phoenix:4317
+    ports:
+      - "8000:8000"
+
+  celery-worker:
+    <<: *app
+    ports: []
+    environment: *app-environment
+    command: ["celery", "-A", "tasks", "worker", "--loglevel=info"]
+
+volumes:
+  etcd_data:
+  postgres_data:
