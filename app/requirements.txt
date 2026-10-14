@@ -13,3 +13,5 @@ openai==1.109.1
 python-multipart==0.0.32
 arize-phoenix-otel==0.17.2
 openinference-instrumentation-langchain==0.1.79
+bcrypt==4.2.1
+PyJWT==2.9.0
