@@ -1,14 +1,7 @@
-"""Prompt store: planner/judge prompts live in Postgres (`prompts` table), not
-hardcoded in graph.py/judge.py, so editing one doesn't need a redeploy. Each
-default below is only a seed - the DB row is the source of truth afterwards."""
-
-PROMPTS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS prompts (
-    key TEXT PRIMARY KEY,
-    content TEXT NOT NULL,
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-"""
+"""Prompt store: planner/judge prompts live in Postgres (`prompts` table, see
+schema/006_prompts.sql), not hardcoded in graph.py/judge.py, so editing one
+doesn't need a redeploy. Each default below is only a seed - the DB row is
+the source of truth afterwards."""
 
 DEFAULT_PROMPTS = {
     "planner": """You are a planner deciding which specialist agent(s) should handle the user's
