@@ -10,72 +10,24 @@ from observability import init_observability
 # afterwards - including inside nested subgraphs - gets traced automatically.
 init_observability()
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain_core.messages import AIMessageChunk
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from psycopg.errors import UniqueViolation
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
 from agent.graph import build_graph_builder
-from agent.prompts import PROMPTS_SCHEMA, list_prompts, seed_prompts, set_prompt
+from agent.prompts import list_prompts, seed_prompts, set_prompt
+from auth import create_access_token, get_current_user, hash_password, verify_password
+from db_schema import apply_schema
 from tasks import celery_app, ingest_document
 
 POSTGRES_URL = os.environ.get(
     "POSTGRES_URL", "postgresql://postgres:postgres@postgres:5432/agentic"
 )
-
-#  No ivfflat/hnsw index here on purpose: ivfflat trains its cluster lists
-#  from whatever rows exist *at CREATE INDEX time* - building it against an
-#  empty table (as this startup hook would, on a fresh DB) silently breaks
-#  ORDER BY ... LIMIT queries against rows inserted afterwards (they stop
-#  being returned at all, with no error). Plain seq-scan cosine distance is
-#  exact and plenty fast at this corpus size; add an ANN index later with
-#  REINDEX once there's real data loaded, not before.
-DOCUMENT_CHUNKS_SCHEMA = """
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE TABLE IF NOT EXISTS document_chunks (
-    id SERIAL PRIMARY KEY,
-    document_name TEXT NOT NULL,
-    chunk_index INT NOT NULL,
-    content TEXT NOT NULL,
-    embedding vector(1536) NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE TABLE IF NOT EXISTS prompt_cache (
-    id SERIAL PRIMARY KEY,
-    prompt TEXT NOT NULL,
-    embedding vector(1536) NOT NULL,
-    response TEXT NOT NULL,
-    agent_id INT,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
--- agent_id added after prompt_cache already shipped (Step 10) - ADD COLUMN
--- IF NOT EXISTS so this stays idempotent against a DB from before that.
-ALTER TABLE prompt_cache ADD COLUMN IF NOT EXISTS agent_id INT;
-CREATE TABLE IF NOT EXISTS agents (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    system_prompt TEXT NOT NULL DEFAULT '',
-    use_general_tools BOOLEAN NOT NULL DEFAULT true,
-    use_research_tools BOOLEAN NOT NULL DEFAULT true,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
--- LangGraph's checkpointer already has every checkpoint for a thread, but
--- not "list me every thread" - its tables aren't meant to be queried that
--- way directly. This is just an index for the UI's history view: one row
--- per thread, upserted on every /chat call, so "which threads exist and
--- which agent did they last use" is a cheap query instead of a checkpoint
--- table scan.
-CREATE TABLE IF NOT EXISTS chat_threads (
-    thread_id TEXT PRIMARY KEY,
-    agent_id INT,
-    last_message TEXT,
-    last_response TEXT,
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
-""" + PROMPTS_SCHEMA
 
 
 @asynccontextmanager
@@ -87,8 +39,7 @@ async def lifespan(app: FastAPI):
     ) as pool:
         checkpointer = AsyncPostgresSaver(pool)
         await checkpointer.setup()
-        async with pool.connection() as conn:
-            await conn.execute(DOCUMENT_CHUNKS_SCHEMA)
+        await apply_schema(pool)
         await seed_prompts(pool)
         # Built after seeding: plan_and_run/judge_reply read the planner/judge
         # prompts from this same pool on every turn (see agent/prompts.py), so
@@ -100,6 +51,66 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="production-agentic-system", lifespan=lifespan)
+
+# Everything except /health and /auth/* requires a valid bearer token - see
+# auth.py. The static UI shell itself is unauthenticated (it's just HTML/JS;
+# it can't do anything without a token) and shows a login screen until one
+# is obtained via /auth/login or /auth/register.
+api = APIRouter(dependencies=[Depends(get_current_user)])
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+
+
+@app.post("/auth/register", response_model=TokenResponse)
+async def register(payload: RegisterRequest, request: Request):
+    if not payload.username.strip() or len(payload.password) < 8:
+        raise HTTPException(status_code=400, detail="username required, password must be >= 8 chars")
+    pw_hash = hash_password(payload.password)
+    async with request.app.state.pg_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            try:
+                await cur.execute(
+                    "INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id",
+                    (payload.username, pw_hash),
+                )
+            except UniqueViolation:
+                raise HTTPException(status_code=409, detail="username already taken")
+            (user_id,) = await cur.fetchone()
+    token = create_access_token(user_id, payload.username)
+    return TokenResponse(access_token=token, username=payload.username)
+
+
+@app.post("/auth/login", response_model=TokenResponse)
+async def login(payload: LoginRequest, request: Request):
+    async with request.app.state.pg_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                "SELECT id, password_hash FROM users WHERE username = %s", (payload.username,)
+            )
+            row = await cur.fetchone()
+    if row is None or not verify_password(payload.password, row[1]):
+        raise HTTPException(status_code=401, detail="invalid username or password")
+    token = create_access_token(row[0], payload.username)
+    return TokenResponse(access_token=token, username=payload.username)
 
 
 class ChatRequest(BaseModel):
@@ -124,12 +135,7 @@ class Agent(AgentCreate):
     id: int
 
 
-@app.get("/health")
-def health():
-    return {"status": "ok"}
-
-
-@app.post("/agents", response_model=Agent)
+@api.post("/agents", response_model=Agent)
 async def create_agent(payload: AgentCreate, request: Request):
     async with request.app.state.pg_pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -150,7 +156,7 @@ async def create_agent(payload: AgentCreate, request: Request):
     return Agent(id=agent_id, **payload.model_dump())
 
 
-@app.get("/agents", response_model=list[Agent])
+@api.get("/agents", response_model=list[Agent])
 async def list_agents(request: Request):
     async with request.app.state.pg_pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -171,12 +177,12 @@ class PromptUpdate(BaseModel):
     content: str
 
 
-@app.get("/prompts")
+@api.get("/prompts")
 async def get_prompts(request: Request):
     return await list_prompts(request.app.state.pg_pool)
 
 
-@app.put("/prompts/{key}")
+@api.put("/prompts/{key}")
 async def update_prompt(key: str, payload: PromptUpdate, request: Request):
     await set_prompt(request.app.state.pg_pool, key, payload.content)
     return {"key": key, "content": payload.content}
@@ -225,6 +231,20 @@ async def _touch_thread(
             )
 
 
+async def _log_turn_boundary(
+    request: Request, thread_id: str, turn_id: str, event_type: str, content: str
+) -> None:
+    async with request.app.state.pg_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                INSERT INTO trace_events (thread_id, turn_id, event_type, output_summary)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (thread_id, turn_id, event_type, content[:4000]),
+            )
+
+
 class ThreadSummary(BaseModel):
     thread_id: str
     agent_id: int | None
@@ -234,7 +254,7 @@ class ThreadSummary(BaseModel):
     updated_at: str
 
 
-@app.get("/threads", response_model=list[ThreadSummary])
+@api.get("/threads", response_model=list[ThreadSummary])
 async def list_threads(request: Request):
     async with request.app.state.pg_pool.connection() as conn:
         async with conn.cursor() as cur:
@@ -260,7 +280,7 @@ async def list_threads(request: Request):
     ]
 
 
-@app.post("/documents")
+@api.post("/documents")
 async def upload_document(file: UploadFile = File(...)):
     raw = await file.read()
     text = raw.decode("utf-8", errors="ignore")
@@ -268,21 +288,25 @@ async def upload_document(file: UploadFile = File(...)):
     return {"task_id": task.id, "document_name": file.filename}
 
 
-@app.get("/documents/status/{task_id}")
+@api.get("/documents/status/{task_id}")
 def document_status(task_id: str):
     result = celery_app.AsyncResult(task_id)
     return {"state": result.state, "result": result.result if result.ready() else None}
 
 
-@app.post("/chat", response_model=ChatResponse)
+@api.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
     thread_id = req.thread_id or str(uuid.uuid4())
+    turn_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     agent_overrides = await _resolve_agent(req.agent_id, request)
+    await _log_turn_boundary(request, thread_id, turn_id, "user_message", req.message)
     result = await request.app.state.graph.ainvoke(
-        {"messages": [("user", req.message)], **agent_overrides}, config
+        {"messages": [("user", req.message)], "thread_id": thread_id, "turn_id": turn_id, **agent_overrides},
+        config,
     )
     response = result["messages"][-1].content
+    await _log_turn_boundary(request, thread_id, turn_id, "assistant_message", response)
     await _touch_thread(thread_id, req.agent_id, req.message, response, request)
     return ChatResponse(response=response, thread_id=thread_id)
 
@@ -291,18 +315,25 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
-@app.post("/chat/stream")
+@api.post("/chat/stream")
 async def chat_stream(req: ChatRequest, request: Request):
     thread_id = req.thread_id or str(uuid.uuid4())
+    turn_id = str(uuid.uuid4())
     config = {"configurable": {"thread_id": thread_id}}
     graph = request.app.state.graph
     agent_overrides = await _resolve_agent(req.agent_id, request)
 
     async def event_generator():
         yield _sse("thread", {"thread_id": thread_id})
+        await _log_turn_boundary(request, thread_id, turn_id, "user_message", req.message)
         saw_token = False
         async for message_chunk, _metadata in graph.astream(
-            {"messages": [("user", req.message)], **agent_overrides},
+            {
+                "messages": [("user", req.message)],
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                **agent_overrides,
+            },
             config,
             stream_mode="messages",
         ):
@@ -320,6 +351,7 @@ async def chat_stream(req: ChatRequest, request: Request):
         else:
             state = await graph.aget_state(config)
             final_content = state.values["messages"][-1].content
+        await _log_turn_boundary(request, thread_id, turn_id, "assistant_message", final_content)
         await _touch_thread(thread_id, req.agent_id, req.message, final_content, request)
         yield _sse("done", {})
 
@@ -342,7 +374,7 @@ class CheckpointSummary(BaseModel):
     agent_id: int | None
 
 
-@app.get("/threads/{thread_id}/checkpoints", response_model=list[CheckpointSummary])
+@api.get("/threads/{thread_id}/checkpoints", response_model=list[CheckpointSummary])
 async def list_checkpoints(thread_id: str, request: Request):
     """Every node transition for this thread, oldest first - one row per
     checkpoint LangGraph wrote, not one row per chat turn. Debugging a single
@@ -366,7 +398,7 @@ async def list_checkpoints(thread_id: str, request: Request):
     return out
 
 
-@app.get("/threads/{thread_id}/checkpoints/{checkpoint_id}")
+@api.get("/threads/{thread_id}/checkpoints/{checkpoint_id}")
 async def get_checkpoint(thread_id: str, checkpoint_id: str, request: Request):
     """Full state frozen at one checkpoint: every message so far, plus
     whatever agent config (system_prompt/allowed_specialists) was active."""
@@ -390,7 +422,7 @@ class ReplayRequest(BaseModel):
     message: str | None = None
 
 
-@app.post("/threads/{thread_id}/replay")
+@api.post("/threads/{thread_id}/replay")
 async def replay(thread_id: str, payload: ReplayRequest, request: Request):
     """Rewind to `checkpoint_id` and either continue forward with no new
     input (re-runs whatever nodes come after it, fresh LLM calls - useful for
@@ -415,6 +447,135 @@ async def replay(thread_id: str, payload: ReplayRequest, request: Request):
         "new_checkpoint_id": new_head.config["configurable"]["checkpoint_id"],
     }
 
+
+@api.get("/threads/{thread_id}/trace")
+async def thread_trace(thread_id: str, request: Request):
+    """Every trace_events row for this thread, grouped into turns (ordered
+    oldest-first within each turn) - the raw material for the Observability
+    tab's per-turn flow view: planner decision, each specialist's LLM/tool
+    calls, judge verdict, cache hit/miss, with token usage on every LLM call."""
+    async with request.app.state.pg_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT id, turn_id, event_type, node, agent_id, model, tool_name,
+                       input_summary, output_summary, input_tokens, output_tokens,
+                       total_tokens, latency_ms, created_at
+                FROM trace_events
+                WHERE thread_id = %s
+                ORDER BY id
+                """,
+                (thread_id,),
+            )
+            rows = await cur.fetchall()
+
+    turns: dict[str, dict] = {}
+    order: list[str] = []
+    for r in rows:
+        turn_id = r[1]
+        if turn_id not in turns:
+            turns[turn_id] = {"turn_id": turn_id, "events": []}
+            order.append(turn_id)
+        turns[turn_id]["events"].append(
+            {
+                "id": r[0],
+                "event_type": r[2],
+                "node": r[3],
+                "agent_id": r[4],
+                "model": r[5],
+                "tool_name": r[6],
+                "input_summary": r[7],
+                "output_summary": r[8],
+                "input_tokens": r[9],
+                "output_tokens": r[10],
+                "total_tokens": r[11],
+                "latency_ms": r[12],
+                "created_at": r[13].isoformat(),
+            }
+        )
+    return [turns[t] for t in order]
+
+
+@api.get("/observability/summary")
+async def observability_summary(request: Request):
+    """Aggregate token/latency/outcome stats across every thread - the cards
+    at the top of the Observability tab. Everything here is derived straight
+    from `trace_events`, no separate rollup table to keep in sync."""
+    async with request.app.state.pg_pool.connection() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT node, model, COUNT(*) AS calls,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                       COALESCE(AVG(latency_ms), 0) AS avg_latency_ms
+                FROM trace_events
+                WHERE event_type = 'llm_call'
+                GROUP BY node, model
+                ORDER BY total_tokens DESC
+                """
+            )
+            by_node = await cur.fetchall()
+
+            await cur.execute(
+                """
+                SELECT thread_id, COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                       COUNT(DISTINCT turn_id) AS turns
+                FROM trace_events
+                WHERE event_type = 'llm_call'
+                GROUP BY thread_id
+                ORDER BY total_tokens DESC
+                LIMIT 20
+                """
+            )
+            by_thread = await cur.fetchall()
+
+            await cur.execute(
+                """
+                SELECT
+                    COUNT(*) FILTER (WHERE event_type = 'cache_result' AND output_summary = 'hit') AS cache_hits,
+                    COUNT(*) FILTER (WHERE event_type = 'cache_result') AS cache_checks,
+                    COUNT(*) FILTER (WHERE event_type = 'llm_call' AND node = 'judge'
+                                      AND output_summary LIKE 'pass:%') AS judge_passes,
+                    COUNT(*) FILTER (WHERE event_type = 'llm_call' AND node = 'judge') AS judge_total,
+                    COUNT(DISTINCT thread_id) AS total_threads,
+                    COUNT(DISTINCT turn_id) AS total_turns,
+                    COALESCE(SUM(total_tokens), 0) AS total_tokens
+                FROM trace_events
+                """
+            )
+            totals = await cur.fetchone()
+
+    return {
+        "by_node": [
+            {
+                "node": r[0],
+                "model": r[1],
+                "calls": r[2],
+                "input_tokens": r[3],
+                "output_tokens": r[4],
+                "total_tokens": r[5],
+                "avg_latency_ms": round(r[6], 1),
+            }
+            for r in by_node
+        ],
+        "by_thread": [
+            {"thread_id": r[0], "total_tokens": r[1], "turns": r[2]} for r in by_thread
+        ],
+        "totals": {
+            "cache_hits": totals[0],
+            "cache_checks": totals[1],
+            "judge_passes": totals[2],
+            "judge_total": totals[3],
+            "total_threads": totals[4],
+            "total_turns": totals[5],
+            "total_tokens": totals[6],
+        },
+    }
+
+
+app.include_router(api)
 
 # Mounted last and at "/" on purpose: Starlette checks explicit routes (all
 # of the above) before falling through to a mount, so this only serves
