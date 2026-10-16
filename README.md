@@ -12,8 +12,8 @@ Docker containers signify the distributed nature of the system.
 * **Streaming** — `/chat/stream` streams token-by-token via Server-Sent Events.
 * **State persistence** — conversation state checkpointed to Postgres (`AsyncPostgresSaver`); pass a `thread_id` to resume a conversation.
 * **MCP tool support** — tools served by a standalone MCP server and loaded via `langchain-mcp-adapters`.
-* **RAG** — document upload → async chunk/embed (Celery + Redis) → pgvector similarity search, exposed as a tool.
-* **Multi-agent orchestration** — a planner picks one or more specialist subgraphs (`general`, `research`) per turn and synthesizes their replies when more than one runs.
+* **RAG** — document upload → async chunk/embed (Celery + Redis) → pgvector similarity search with HNSW GIN indexes, reranking top k retrievals, exposed as a tool to agents
+* **Multi-agent orchestration** — a planner picks one or more specialist subgraphs (`general`, `research`) per turn and synthesizes their replies when more than one runs. Agents with skills, tool access and confined boundaries for efficient monitoring
 * **Semantic caching** — prompt/response pairs cached by embedding similarity in Postgres, scoped per agent.
 * **Governance** — a zero-temperature judge model reviews each draft reply for relevance/safety before it's returned.
 * **Prompts as data** — planner and judge prompts live in a Postgres `prompts` table (seeded with defaults on startup) and are read fresh on every turn, so they can be edited via the `/prompts` API with no redeploy.
